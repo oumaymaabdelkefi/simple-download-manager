@@ -39,6 +39,7 @@ class SDMWebApi:
         filename = str(payload.get("filename") or "").strip() or None
         threads = self._clamp_int(payload.get("threads"), 1, 16, 4)
         retries = self._clamp_int(payload.get("retries"), 0, 10, 3)
+        bandwidth_limit = self._parse_bandwidth_limit(payload.get("bandwidth_limit"))
         download_id = uuid.uuid4().hex[:10]
         scheduled_at = self._parse_schedule(payload.get("schedule"))
 
@@ -54,6 +55,7 @@ class SDMWebApi:
                         "filename": filename,
                         "threads": threads,
                         "retries": retries,
+                        "bandwidth_limit": bandwidth_limit,
                     },
                     "scheduled_at": scheduled_at,
                     "status": DownloadStatus.PENDING.value,
@@ -62,7 +64,7 @@ class SDMWebApi:
             return {"ok": True, "id": download_id, "filename": filename or self._filename_from_url(url), "scheduled": True}
 
         try:
-            task = self._create_task(url, dest_dir, filename, threads, retries)
+            task = self._create_task(url, dest_dir, filename, threads, retries, bandwidth_limit)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -178,6 +180,7 @@ class SDMWebApi:
                 payload["filename"],
                 payload["threads"],
                 payload["retries"],
+                payload.get("bandwidth_limit"),
             )
             row_id = save_download(task)
         except Exception:
@@ -205,13 +208,14 @@ class SDMWebApi:
         timer.daemon = True
         timer.start()
 
-    def _create_task(self, url: str, dest_dir: str, filename: str | None, threads: int, retries: int) -> DownloadTask:
+    def _create_task(self, url: str, dest_dir: str, filename: str | None, threads: int, retries: int, bandwidth_limit: int | None) -> DownloadTask:
         return self.manager.create_task(
             url=url,
             dest_dir=dest_dir,
             filename=filename,
             num_threads=threads,
             max_retries=retries,
+            bandwidth_limit=bandwidth_limit,
             on_complete=self._on_complete,
             on_error=self._on_error,
         )
@@ -256,6 +260,7 @@ class SDMWebApi:
             "eta": None,
             "num_threads": payload.get("threads", 4),
             "max_retries": payload.get("retries", 3),
+            "bandwidth_limit": payload.get("bandwidth_limit"),
             "error": None,
             "segments": [],
             "scheduled_at": item.get("scheduled_at"),
@@ -275,6 +280,7 @@ class SDMWebApi:
             "eta": task.eta,
             "num_threads": task.num_threads,
             "max_retries": task.max_retries,
+            "bandwidth_limit": task.bandwidth_limit,
             "error": task.error,
             "segments": [
                 {
@@ -314,6 +320,15 @@ class SDMWebApi:
             return datetime.fromisoformat(value).timestamp()
         except ValueError:
             return None
+
+    def _parse_bandwidth_limit(self, value: Any) -> int | None:
+        try:
+            mbps = float(value or 0)
+        except (TypeError, ValueError):
+            return None
+        if mbps <= 0:
+            return None
+        return int(mbps * 1024 * 1024)
 
     def _read_clipboard(self) -> str:
         if sys.platform == "darwin":

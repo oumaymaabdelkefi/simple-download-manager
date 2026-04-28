@@ -36,6 +36,7 @@ class DownloadTask:
     dest_path: str
     num_threads: int = 4
     max_retries: int = 3
+    bandwidth_limit: Optional[int] = None  # Combined bytes per second limit
     chunk_size: int = 1024 * 64  # 64 KB
 
     # State
@@ -89,6 +90,16 @@ class DownloadTask:
     def filename(self) -> str:
         return os.path.basename(self.dest_path)
 
+    def throttle(self):
+        """Limit combined task throughput across all segment workers."""
+        if not self.bandwidth_limit or self.bandwidth_limit <= 0 or self.start_time is None:
+            return
+        expected_elapsed = self.downloaded_bytes / self.bandwidth_limit
+        actual_elapsed = time.time() - self.start_time
+        delay = expected_elapsed - actual_elapsed
+        if delay > 0:
+            time.sleep(min(delay, 1.0))
+
 
 class SegmentDownloader(threading.Thread):
     """Downloads a single byte-range segment of a file."""
@@ -138,6 +149,7 @@ class SegmentDownloader(threading.Thread):
                         self.segment.downloaded += size
                         with self.task._lock:
                             self.task.downloaded_bytes += size
+                        self.task.throttle()
                         if self.task.on_progress:
                             self.task.on_progress(self.task)
 
@@ -158,6 +170,7 @@ class DownloadManager:
         filename: Optional[str] = None,
         num_threads: int = 4,
         max_retries: int = 3,
+        bandwidth_limit: Optional[int] = None,
         on_progress: Optional[Callable] = None,
         on_complete: Optional[Callable] = None,
         on_error: Optional[Callable] = None,
@@ -172,6 +185,7 @@ class DownloadManager:
             dest_path=dest_path,
             num_threads=num_threads,
             max_retries=max_retries,
+            bandwidth_limit=bandwidth_limit,
             on_progress=on_progress,
             on_complete=on_complete,
             on_error=on_error,
@@ -261,6 +275,7 @@ class DownloadManager:
                         seg.downloaded += size
                         with task._lock:
                             task.downloaded_bytes += size
+                        task.throttle()
                         if task.on_progress:
                             task.on_progress(task)
 

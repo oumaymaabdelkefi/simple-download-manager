@@ -64,6 +64,7 @@ def cmd_download(args):
         filename=args.filename,
         num_threads=args.threads,
         max_retries=args.retries,
+        bandwidth_limit=int(args.bandwidth * 1024 * 1024) if args.bandwidth else None,
         on_progress=print_progress,
         on_complete=on_complete,
         on_error=on_error,
@@ -72,6 +73,8 @@ def cmd_download(args):
     row_id = save_download(task)
     print(f"⬇  Downloading: {args.url}")
     print(f"   Threads: {args.threads}  |  Max retries: {args.retries}")
+    if args.bandwidth:
+        print(f"   Bandwidth limit: {args.bandwidth:g} MB/s")
     print(f"   Saving to: {task.dest_path}\n")
 
     manager.start(task)
@@ -126,6 +129,7 @@ def main():
     dl.add_argument("-f", "--filename", default=None, help="Override filename")
     dl.add_argument("-t", "--threads", type=int, default=4, help="Number of threads (default: 4)")
     dl.add_argument("-r", "--retries", type=int, default=3, help="Max retries per segment (default: 3)")
+    dl.add_argument("-b", "--bandwidth", type=float, default=0, help="Bandwidth limit in MB/s (default: unlimited)")
 
     # History subcommand
     hist = sub.add_parser("history", aliases=["hist"], help="Show download history")

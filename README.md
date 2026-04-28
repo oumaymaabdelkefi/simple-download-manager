@@ -31,6 +31,7 @@
 | Cancel download | ✅ Core |
 | Progress bar (%, speed, ETA) | ✅ Optional |
 | Automatic retry with backoff | ✅ Optional |
+| Bandwidth limiting | ✅ Optional |
 | Download history (SQLite) | ✅ Optional |
 | CLI interface | ✅ Core |
 | Tkinter GUI | ✅ Optional |
@@ -143,6 +144,9 @@ python cli.py download https://example.com/file.zip -f myfile.zip
 
 # Max retries
 python cli.py download https://example.com/file.zip -r 5
+
+# Limit bandwidth to 2.5 MB/s
+python cli.py download https://example.com/file.zip -b 2.5
 
 # View download history
 python cli.py history
