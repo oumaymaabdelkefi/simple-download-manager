@@ -125,6 +125,12 @@ class SegmentDownloader(threading.Thread):
                 time.sleep(2 ** self.segment.retries)  # Exponential backoff
 
     def _download(self):
+        segment_size = self.segment.end - self.segment.start + 1
+        if self.segment.downloaded >= segment_size:
+            self.segment.downloaded = segment_size
+            self.segment.status = DownloadStatus.COMPLETED
+            return
+
         headers = {"Range": f"bytes={self.segment.start + self.segment.downloaded}-{self.segment.end}"}
         self.segment.status = DownloadStatus.DOWNLOADING
 
@@ -249,6 +255,8 @@ class DownloadManager:
             end = task.total_size - 1 if i == task.num_threads - 1 else (i + 1) * seg_size - 1
             task.segments.append(SegmentInfo(index=i, start=start, end=end))
 
+        self._load_existing_parts(task)
+
         workers = [SegmentDownloader(task, seg, session) for seg in task.segments]
         for w in workers:
             w.start()
@@ -258,12 +266,17 @@ class DownloadManager:
     def _simple_download(self, task: DownloadTask, session: requests.Session):
         seg = SegmentInfo(index=0, start=0, end=task.total_size - 1 if task.total_size else 0)
         task.segments = [seg]
+        self._load_existing_parts(task)
+        if task.total_size and seg.downloaded >= task.total_size:
+            seg.downloaded = task.total_size
+            seg.status = DownloadStatus.COMPLETED
+            return
         seg.status = DownloadStatus.DOWNLOADING
 
         with session.get(task.url, stream=True, timeout=30) as resp:
             resp.raise_for_status()
             tmp_path = f"{task.dest_path}.part0"
-            with open(tmp_path, "wb") as f:
+            with open(tmp_path, "ab" if seg.downloaded else "wb") as f:
                 for chunk in resp.iter_content(chunk_size=task.chunk_size):
                     task._pause_event.wait()
                     if task._cancel_event.is_set():
@@ -280,6 +293,23 @@ class DownloadManager:
                             task.on_progress(task)
 
         seg.status = DownloadStatus.COMPLETED
+
+    def _load_existing_parts(self, task: DownloadTask):
+        """Restore segment progress from .part files left by a previous run."""
+        task.downloaded_bytes = 0
+        for seg in task.segments:
+            part_path = f"{task.dest_path}.part{seg.index}"
+            if not os.path.exists(part_path):
+                continue
+            segment_size = seg.end - seg.start + 1 if task.total_size else os.path.getsize(part_path)
+            existing_size = min(os.path.getsize(part_path), segment_size)
+            if existing_size < os.path.getsize(part_path):
+                with open(part_path, "ab") as part:
+                    part.truncate(existing_size)
+            seg.downloaded = existing_size
+            if segment_size and existing_size >= segment_size:
+                seg.status = DownloadStatus.COMPLETED
+            task.downloaded_bytes += existing_size
 
     def _merge_segments(self, task: DownloadTask):
         with open(task.dest_path, "wb") as out:

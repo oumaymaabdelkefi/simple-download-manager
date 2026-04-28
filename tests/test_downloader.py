@@ -152,6 +152,27 @@ class TestDownloadManager(unittest.TestCase):
         manager.start(task)
         self.assertTrue(completed.wait(timeout=15))
 
+    def test_resume_from_existing_part_files(self):
+        filename = "test_restart_resume.bin"
+        dest_path = os.path.join(self.tmpdir, filename)
+        segment_size = len(TEST_CONTENT) // 4
+
+        with open(f"{dest_path}.part0", "wb") as f:
+            f.write(TEST_CONTENT[:segment_size])
+        with open(f"{dest_path}.part1", "wb") as f:
+            f.write(TEST_CONTENT[segment_size:segment_size + (segment_size // 2)])
+
+        manager = DownloadManager()
+        task = manager.create_task(self.url, dest_dir=self.tmpdir,
+                                    filename=filename, num_threads=4)
+        manager.start(task)
+        self._wait_for(task)
+
+        self.assertEqual(task.status, DownloadStatus.COMPLETED)
+        self.assertEqual(task.progress, 100.0)
+        with open(task.dest_path, "rb") as f:
+            self.assertEqual(f.read(), TEST_CONTENT)
+
     def test_multi_thread_faster_than_single(self):
         """Multi-thread should complete no slower than single thread (same local server)."""
         manager = DownloadManager()

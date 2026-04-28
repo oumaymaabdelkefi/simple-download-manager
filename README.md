@@ -28,6 +28,7 @@
 | Download file from URL | ✅ Core |
 | Multi-threaded segmented download | ✅ Core |
 | Pause / Resume | ✅ Optional |
+| Resume after application restart | ✅ Optional |
 | Cancel download | ✅ Core |
 | Progress bar (%, speed, ETA) | ✅ Optional |
 | Automatic retry with backoff | ✅ Optional |
@@ -189,6 +190,7 @@ python ui/gui.py
 - Paste URL → choose thread count → click **⬇ Add Download**
 - Each download shows a progress bar, speed, ETA, and Pause/Cancel buttons
 - Switch to the **History** tab to view all past downloads
+- Interrupted downloads can be resumed from History if their `.partN` files are still present
 
 ---
 
@@ -234,6 +236,8 @@ Content-Length: 300000000
 ```
 
 Each `SegmentDownloader` thread requests its own byte range independently. Segments are saved to temporary `.partN` files and merged in order once all threads complete.
+
+If SDM closes before a download finishes, the `.partN` files remain on disk. Starting the same download again, or using **Resume** from the browser UI History tab, reuses those existing part files and only downloads the missing byte ranges.
 
 ---
 

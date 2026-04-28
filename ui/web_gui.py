@@ -153,6 +153,31 @@ class SDMWebApi:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def resume_history(self, row_id: int) -> dict[str, Any]:
+        entry = next((item for item in get_history(1000) if item.id == int(row_id)), None)
+        if entry is None:
+            return {"ok": False, "error": "History entry not found."}
+
+        download_id = uuid.uuid4().hex[:10]
+        try:
+            task = self._create_task(
+                entry.url,
+                os.path.dirname(entry.dest_path) or ".",
+                entry.filename,
+                entry.num_threads,
+                3,
+                None,
+            )
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+        row_id = save_download(task)
+        with self._lock:
+            self._downloads[download_id] = {"task": task, "row_id": row_id, "visible": True}
+            self._task_ids[id(task)] = download_id
+        self.manager.start(task)
+        return {"ok": True, "id": download_id, "filename": task.filename}
+
     def get_state(self) -> dict[str, Any]:
         with self._lock:
             downloads = [
