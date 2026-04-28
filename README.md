@@ -34,6 +34,7 @@
 | Download history (SQLite) | ✅ Optional |
 | CLI interface | ✅ Core |
 | Tkinter GUI | ✅ Optional |
+| Webview GUI | ✅ Optional |
 | Concurrent downloads | ✅ Optional |
 
 ---
@@ -77,7 +78,9 @@ SDM uses a **Layered Architecture**:
 | **File Assembler** | `core/downloader.py` | Merges `.partN` temp files into the final file |
 | **Persistence Module** | `core/history.py` | SQLite-backed history of all downloads |
 | **CLI** | `cli.py` | Terminal interface with live progress bar |
-| **GUI** | `ui/gui.py` | Tkinter desktop UI with per-download rows |
+| **Tkinter GUI** | `ui/gui.py` | Classic desktop UI with per-download rows |
+| **Browser GUI** | `ui/browser_gui.py` | Modern HTML/CSS UI served in your browser and backed by the same downloader core |
+| **Webview GUI** | `ui/web_gui.py` | Modern HTML/CSS desktop window backed by the same downloader core |
 
 ### Communication Mechanism
 
@@ -99,7 +102,11 @@ sdm/
 │   └── history.py          # SQLite persistence
 ├── ui/
 │   ├── __init__.py
-│   └── gui.py              # Tkinter GUI
+│   ├── gui.py              # Tkinter GUI
+│   ├── browser_gui.py      # Browser-based HTML/CSS GUI
+│   ├── web_gui.py          # HTML/CSS webview GUI
+│   └── assets/
+│       └── sdm_ui.html     # Webview UI asset
 ├── tests/
 │   ├── __init__.py
 │   └── test_downloader.py  # Unit tests with local HTTP server
@@ -165,6 +172,13 @@ python cli.py history --clear
 ## Usage — GUI
 
 ```bash
+# Browser UI
+python ui/browser_gui.py
+
+# Desktop webview UI
+python ui/web_gui.py
+
+# Classic Tkinter UI
 python ui/gui.py
 ```
 
