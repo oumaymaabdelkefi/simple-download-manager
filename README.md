@@ -38,6 +38,7 @@
 | Tkinter GUI | ✅ Optional |
 | Webview GUI | ✅ Optional |
 | Concurrent downloads | ✅ Optional |
+| Download queue management | ✅ Optional |
 
 ---
 
@@ -191,6 +192,7 @@ python ui/gui.py
 - Each download shows a progress bar, speed, ETA, and Pause/Cancel buttons
 - Switch to the **History** tab to view all past downloads
 - Interrupted downloads can be resumed from History if their `.partN` files are still present
+- The browser UI Queue tab manages pending downloads, supports reordering, and starts queued items as active slots become available
 
 ---
 

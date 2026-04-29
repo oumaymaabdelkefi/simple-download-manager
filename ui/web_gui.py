@@ -29,6 +29,7 @@ class SDMWebApi:
         self._lock = threading.Lock()
         self._downloads: dict[str, dict[str, Any]] = {}
         self._task_ids: dict[int, str] = {}
+        self.max_active_downloads = 2
 
     def add_download(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = str(payload.get("url", "")).strip()
@@ -43,7 +44,8 @@ class SDMWebApi:
         download_id = uuid.uuid4().hex[:10]
         scheduled_at = self._parse_schedule(payload.get("schedule"))
 
-        if scheduled_at and scheduled_at > time.time():
+        should_queue = (scheduled_at and scheduled_at > time.time()) or self._active_count() >= self.max_active_downloads
+        if should_queue:
             with self._lock:
                 self._downloads[download_id] = {
                     "task": None,
@@ -58,10 +60,18 @@ class SDMWebApi:
                         "bandwidth_limit": bandwidth_limit,
                     },
                     "scheduled_at": scheduled_at,
+                    "queued_at": time.time(),
                     "status": DownloadStatus.PENDING.value,
                 }
-            self._schedule_download_start(download_id, scheduled_at)
-            return {"ok": True, "id": download_id, "filename": filename or self._filename_from_url(url), "scheduled": True}
+            if scheduled_at and scheduled_at > time.time():
+                self._schedule_download_start(download_id, scheduled_at)
+            return {
+                "ok": True,
+                "id": download_id,
+                "filename": filename or self._filename_from_url(url),
+                "scheduled": bool(scheduled_at and scheduled_at > time.time()),
+                "queued": True,
+            }
 
         try:
             task = self._create_task(url, dest_dir, filename, threads, retries, bandwidth_limit)
@@ -96,6 +106,7 @@ class SDMWebApi:
                 item["status"] = DownloadStatus.CANCELLED.value
         if task and task.status not in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED, DownloadStatus.FAILED):
             self.manager.cancel(task)
+        self._start_next_queued()
         return {"ok": True}
 
     def remove_download(self, download_id: str) -> dict[str, Any]:
@@ -106,6 +117,7 @@ class SDMWebApi:
                 if task and task.status not in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED, DownloadStatus.FAILED):
                     self.manager.cancel(task)
                 item["visible"] = False
+        self._start_next_queued()
         return {"ok": True}
 
     def pause_all(self) -> dict[str, Any]:
@@ -134,6 +146,17 @@ class SDMWebApi:
 
     def clear_history(self) -> dict[str, Any]:
         clear_history()
+        return {"ok": True}
+
+    def start_queued(self, download_id: str) -> dict[str, Any]:
+        return self._start_queued_download(download_id, force=True)
+
+    def move_queue_up(self, download_id: str) -> dict[str, Any]:
+        self._move_queue_item(download_id, -1)
+        return {"ok": True}
+
+    def move_queue_down(self, download_id: str) -> dict[str, Any]:
+        self._move_queue_item(download_id, 1)
         return {"ok": True}
 
     def paste_clipboard(self) -> dict[str, Any]:
@@ -188,6 +211,7 @@ class SDMWebApi:
         return {
             "downloads": downloads,
             "queue": [item for item in downloads if item["status"] == DownloadStatus.PENDING.value],
+            "max_active_downloads": self.max_active_downloads,
             "history": [self._serialize_history(entry) for entry in get_history(100)],
         }
 
@@ -196,33 +220,7 @@ class SDMWebApi:
             item = self._downloads.get(download_id)
             if not item or not item["visible"] or item.get("status") != DownloadStatus.PENDING.value:
                 return
-            payload = item["payload"]
-
-        try:
-            task = self._create_task(
-                payload["url"],
-                payload["dest_dir"],
-                payload["filename"],
-                payload["threads"],
-                payload["retries"],
-                payload.get("bandwidth_limit"),
-            )
-            row_id = save_download(task)
-        except Exception:
-            with self._lock:
-                item = self._downloads.get(download_id)
-                if item:
-                    item["status"] = DownloadStatus.FAILED.value
-            return
-
-        with self._lock:
-            item = self._downloads.get(download_id)
-            if not item:
-                return
-            item["task"] = task
-            item["row_id"] = row_id
-            self._task_ids[id(task)] = download_id
-        self.manager.start(task)
+        self._start_queued_download(download_id)
 
     def _schedule_download_start(self, download_id: str, scheduled_at: float):
         delay = max(0.0, min(scheduled_at - time.time(), 24 * 60 * 60))
@@ -247,9 +245,107 @@ class SDMWebApi:
 
     def _on_complete(self, task: DownloadTask):
         self._update_history_row(task)
+        self._start_next_queued()
 
     def _on_error(self, task: DownloadTask):
         self._update_history_row(task)
+        self._start_next_queued()
+
+    def _active_count(self) -> int:
+        with self._lock:
+            return sum(
+                1
+                for item in self._downloads.values()
+                if item.get("visible")
+                and item.get("task")
+                and item["task"].status == DownloadStatus.DOWNLOADING
+            )
+
+    def _start_next_queued(self):
+        while self._active_count() < self.max_active_downloads:
+            with self._lock:
+                now = time.time()
+                candidates = sorted(
+                    (
+                        (download_id, item)
+                        for download_id, item in self._downloads.items()
+                        if item.get("visible")
+                        and item.get("task") is None
+                        and item.get("status") == DownloadStatus.PENDING.value
+                        and (not item.get("scheduled_at") or item["scheduled_at"] <= now)
+                    ),
+                    key=lambda pair: pair[1].get("queued_at", 0),
+                )
+                next_id = candidates[0][0] if candidates else None
+            if not next_id:
+                return
+            result = self._start_queued_download(next_id)
+            if not result.get("ok"):
+                return
+
+    def _start_queued_download(self, download_id: str, force: bool = False) -> dict[str, Any]:
+        if not force and self._active_count() >= self.max_active_downloads:
+            return {"ok": False, "error": "Active download limit reached."}
+
+        with self._lock:
+            item = self._downloads.get(download_id)
+            if not item or not item.get("visible"):
+                return {"ok": False, "error": "Queued download not found."}
+            if item.get("task") is not None:
+                return {"ok": True}
+            if item.get("status") != DownloadStatus.PENDING.value:
+                return {"ok": False, "error": "Queued download is not pending."}
+            if not force and item.get("scheduled_at") and item["scheduled_at"] > time.time():
+                return {"ok": False, "error": "Download is scheduled for later."}
+            payload = item["payload"]
+
+        try:
+            task = self._create_task(
+                payload["url"],
+                payload["dest_dir"],
+                payload["filename"],
+                payload["threads"],
+                payload["retries"],
+                payload.get("bandwidth_limit"),
+            )
+            row_id = save_download(task)
+        except Exception as exc:
+            with self._lock:
+                item = self._downloads.get(download_id)
+                if item:
+                    item["status"] = DownloadStatus.FAILED.value
+            return {"ok": False, "error": str(exc)}
+
+        with self._lock:
+            item = self._downloads.get(download_id)
+            if not item:
+                return {"ok": False, "error": "Queued download not found."}
+            item["task"] = task
+            item["row_id"] = row_id
+            self._task_ids[id(task)] = download_id
+        self.manager.start(task)
+        return {"ok": True, "id": download_id, "filename": task.filename}
+
+    def _move_queue_item(self, download_id: str, direction: int):
+        with self._lock:
+            queue = sorted(
+                [
+                    (item_id, item)
+                    for item_id, item in self._downloads.items()
+                    if item.get("visible") and item.get("task") is None and item.get("status") == DownloadStatus.PENDING.value
+                ],
+                key=lambda pair: pair[1].get("queued_at", 0),
+            )
+            index = next((i for i, (item_id, _) in enumerate(queue) if item_id == download_id), None)
+            if index is None:
+                return
+            new_index = max(0, min(len(queue) - 1, index + direction))
+            if new_index == index:
+                return
+            queue[index], queue[new_index] = queue[new_index], queue[index]
+            base = time.time()
+            for offset, (_, item) in enumerate(queue):
+                item["queued_at"] = base + offset / 1000
 
     def _update_history_row(self, task: DownloadTask):
         with self._lock:
@@ -289,6 +385,7 @@ class SDMWebApi:
             "error": None,
             "segments": [],
             "scheduled_at": item.get("scheduled_at"),
+            "queued_at": item.get("queued_at"),
         }
 
     def _serialize_task(self, download_id: str, task: DownloadTask) -> dict[str, Any]:
