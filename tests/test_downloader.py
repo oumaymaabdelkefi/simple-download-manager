@@ -14,6 +14,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from core.downloader import DownloadManager, DownloadStatus
+import core.history as history
 
 # ─── Minimal test HTTP server ─────────────────────────────────────────────────
 
@@ -195,6 +196,38 @@ class TestDownloadManager(unittest.TestCase):
         # Both should succeed
         self.assertEqual(task1.status, DownloadStatus.COMPLETED)
         self.assertEqual(task4.status, DownloadStatus.COMPLETED)
+
+    def test_queue_entries_persist_in_sqlite(self):
+        old_db_path = history.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                history.DB_PATH = os.path.join(tmp, "history.db")
+                history.init_db()
+                entry = history.QueueEntry(
+                    id="queue-test",
+                    url="http://127.0.0.1/file.bin",
+                    dest_dir=tmp,
+                    filename="file.bin",
+                    num_threads=4,
+                    max_retries=3,
+                    bandwidth_limit=1024,
+                    scheduled_at=12345.0,
+                    queued_at=1.0,
+                )
+
+                history.save_queue_entry(entry)
+                entries = history.get_queue_entries()
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0].id, "queue-test")
+                self.assertEqual(entries[0].scheduled_at, 12345.0)
+
+                history.update_queue_order([("queue-test", 2.0)])
+                self.assertEqual(history.get_queue_entries()[0].queued_at, 2.0)
+
+                history.delete_queue_entry("queue-test")
+                self.assertEqual(history.get_queue_entries(), [])
+        finally:
+            history.DB_PATH = old_db_path
 
 
 if __name__ == "__main__":

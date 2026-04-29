@@ -27,6 +27,19 @@ class HistoryEntry:
     error: Optional[str]
 
 
+@dataclass
+class QueueEntry:
+    id: str
+    url: str
+    dest_dir: str
+    filename: Optional[str]
+    num_threads: int
+    max_retries: int
+    bandwidth_limit: Optional[int]
+    scheduled_at: Optional[float]
+    queued_at: float
+
+
 def _get_conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -48,6 +61,19 @@ def init_db():
                 end_time    TEXT,
                 num_threads INTEGER DEFAULT 4,
                 error       TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS download_queue (
+                id              TEXT PRIMARY KEY,
+                url             TEXT NOT NULL,
+                dest_dir        TEXT NOT NULL,
+                filename        TEXT,
+                num_threads     INTEGER DEFAULT 4,
+                max_retries     INTEGER DEFAULT 3,
+                bandwidth_limit INTEGER,
+                scheduled_at    REAL,
+                queued_at       REAL NOT NULL
             )
         """)
         conn.commit()
@@ -107,6 +133,49 @@ def delete_entry(row_id: int):
 def clear_history():
     with _get_conn() as conn:
         conn.execute("DELETE FROM downloads")
+        conn.commit()
+
+
+def save_queue_entry(entry: QueueEntry):
+    with _get_conn() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO download_queue
+            (id, url, dest_dir, filename, num_threads, max_retries, bandwidth_limit, scheduled_at, queued_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            entry.id,
+            entry.url,
+            entry.dest_dir,
+            entry.filename,
+            entry.num_threads,
+            entry.max_retries,
+            entry.bandwidth_limit,
+            entry.scheduled_at,
+            entry.queued_at,
+        ))
+        conn.commit()
+
+
+def get_queue_entries() -> List[QueueEntry]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM download_queue ORDER BY queued_at ASC"
+        ).fetchall()
+    return [QueueEntry(**dict(row)) for row in rows]
+
+
+def delete_queue_entry(entry_id: str):
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM download_queue WHERE id=?", (entry_id,))
+        conn.commit()
+
+
+def update_queue_order(entries: List[tuple[str, float]]):
+    with _get_conn() as conn:
+        conn.executemany(
+            "UPDATE download_queue SET queued_at=? WHERE id=?",
+            [(queued_at, entry_id) for entry_id, queued_at in entries],
+        )
         conn.commit()
 
 

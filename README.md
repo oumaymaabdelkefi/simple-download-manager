@@ -34,6 +34,7 @@
 | Automatic retry with backoff | ✅ Optional |
 | Bandwidth limiting | ✅ Optional |
 | Download history (SQLite) | ✅ Optional |
+| Persistent scheduled queue | ✅ Optional |
 | CLI interface | ✅ Core |
 | Tkinter GUI | ✅ Optional |
 | Webview GUI | ✅ Optional |
@@ -193,6 +194,7 @@ python ui/gui.py
 - Switch to the **History** tab to view all past downloads
 - Interrupted downloads can be resumed from History if their `.partN` files are still present
 - The browser UI Queue tab manages pending downloads, supports reordering, and starts queued items as active slots become available
+- Scheduled/pending queue items are persisted in SQLite and restored after app restart
 
 ---
 

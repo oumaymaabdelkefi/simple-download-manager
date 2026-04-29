@@ -20,7 +20,17 @@ except ImportError:  # pragma: no cover - handled at runtime for users
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from core.downloader import DownloadManager, DownloadStatus, DownloadTask
-from core.history import clear_history, get_history, save_download, update_download
+from core.history import (
+    QueueEntry,
+    clear_history,
+    delete_queue_entry,
+    get_history,
+    get_queue_entries,
+    save_download,
+    save_queue_entry,
+    update_download,
+    update_queue_order,
+)
 
 
 class SDMWebApi:
@@ -30,6 +40,7 @@ class SDMWebApi:
         self._downloads: dict[str, dict[str, Any]] = {}
         self._task_ids: dict[int, str] = {}
         self.max_active_downloads = 2
+        self._load_persisted_queue()
 
     def add_download(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = str(payload.get("url", "")).strip()
@@ -46,23 +57,20 @@ class SDMWebApi:
 
         should_queue = (scheduled_at and scheduled_at > time.time()) or self._active_count() >= self.max_active_downloads
         if should_queue:
+            queued_at = time.time()
+            item = self._queue_item(
+                url=url,
+                dest_dir=dest_dir,
+                filename=filename,
+                threads=threads,
+                retries=retries,
+                bandwidth_limit=bandwidth_limit,
+                scheduled_at=scheduled_at,
+                queued_at=queued_at,
+            )
             with self._lock:
-                self._downloads[download_id] = {
-                    "task": None,
-                    "row_id": None,
-                    "visible": True,
-                    "payload": {
-                        "url": url,
-                        "dest_dir": dest_dir,
-                        "filename": filename,
-                        "threads": threads,
-                        "retries": retries,
-                        "bandwidth_limit": bandwidth_limit,
-                    },
-                    "scheduled_at": scheduled_at,
-                    "queued_at": time.time(),
-                    "status": DownloadStatus.PENDING.value,
-                }
+                self._downloads[download_id] = item
+            self._persist_queue_item(download_id, item)
             if scheduled_at and scheduled_at > time.time():
                 self._schedule_download_start(download_id, scheduled_at)
             return {
@@ -104,6 +112,7 @@ class SDMWebApi:
             task = item.get("task") if item else None
             if item and task is None:
                 item["status"] = DownloadStatus.CANCELLED.value
+                delete_queue_entry(download_id)
         if task and task.status not in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED, DownloadStatus.FAILED):
             self.manager.cancel(task)
         self._start_next_queued()
@@ -117,6 +126,8 @@ class SDMWebApi:
                 if task and task.status not in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED, DownloadStatus.FAILED):
                     self.manager.cancel(task)
                 item["visible"] = False
+                if task is None:
+                    delete_queue_entry(download_id)
         self._start_next_queued()
         return {"ok": True}
 
@@ -323,6 +334,7 @@ class SDMWebApi:
             item["task"] = task
             item["row_id"] = row_id
             self._task_ids[id(task)] = download_id
+        delete_queue_entry(download_id)
         self.manager.start(task)
         return {"ok": True, "id": download_id, "filename": task.filename}
 
@@ -344,8 +356,73 @@ class SDMWebApi:
                 return
             queue[index], queue[new_index] = queue[new_index], queue[index]
             base = time.time()
+            persisted_order = []
             for offset, (_, item) in enumerate(queue):
                 item["queued_at"] = base + offset / 1000
+            for _, item in queue:
+                item_id = next(k for k, v in self._downloads.items() if v is item)
+                persisted_order.append((item_id, item["queued_at"]))
+        update_queue_order(persisted_order)
+
+    def _queue_item(
+        self,
+        url: str,
+        dest_dir: str,
+        filename: str | None,
+        threads: int,
+        retries: int,
+        bandwidth_limit: int | None,
+        scheduled_at: float | None,
+        queued_at: float,
+    ) -> dict[str, Any]:
+        return {
+            "task": None,
+            "row_id": None,
+            "visible": True,
+            "payload": {
+                "url": url,
+                "dest_dir": dest_dir,
+                "filename": filename,
+                "threads": threads,
+                "retries": retries,
+                "bandwidth_limit": bandwidth_limit,
+            },
+            "scheduled_at": scheduled_at,
+            "queued_at": queued_at,
+            "status": DownloadStatus.PENDING.value,
+        }
+
+    def _persist_queue_item(self, download_id: str, item: dict[str, Any]):
+        payload = item["payload"]
+        save_queue_entry(
+            QueueEntry(
+                id=download_id,
+                url=payload["url"],
+                dest_dir=payload["dest_dir"],
+                filename=payload["filename"],
+                num_threads=payload["threads"],
+                max_retries=payload["retries"],
+                bandwidth_limit=payload.get("bandwidth_limit"),
+                scheduled_at=item.get("scheduled_at"),
+                queued_at=item["queued_at"],
+            )
+        )
+
+    def _load_persisted_queue(self):
+        for entry in get_queue_entries():
+            self._downloads[entry.id] = self._queue_item(
+                url=entry.url,
+                dest_dir=entry.dest_dir,
+                filename=entry.filename,
+                threads=entry.num_threads,
+                retries=entry.max_retries,
+                bandwidth_limit=entry.bandwidth_limit,
+                scheduled_at=entry.scheduled_at,
+                queued_at=entry.queued_at,
+            )
+            if entry.scheduled_at and entry.scheduled_at > time.time():
+                self._schedule_download_start(entry.id, entry.scheduled_at)
+        self._start_next_queued()
 
     def _update_history_row(self, task: DownloadTask):
         with self._lock:
