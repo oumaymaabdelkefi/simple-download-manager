@@ -299,7 +299,10 @@ class SDMApp(tk.Tk):
         self.notebook.select(0)
 
     def _on_progress(self, task: DownloadTask):
-        pass  # UI updated in _tick loop
+        for row in self.rows:
+            if row.task is task and row.row_id:
+                update_download(row.row_id, task)
+                break
 
     def _on_complete(self, task: DownloadTask):
         for row in self.rows:

@@ -4,6 +4,7 @@ SDM - Simple Download Manager webview UI.
 """
 
 import os
+import json
 import subprocess
 import sys
 import threading
@@ -39,6 +40,7 @@ class SDMWebApi:
         self._lock = threading.Lock()
         self._downloads: dict[str, dict[str, Any]] = {}
         self._task_ids: dict[int, str] = {}
+        self._last_progress_save: dict[int, float] = {}
         self.max_active_downloads = 2
         self._load_persisted_queue()
 
@@ -256,9 +258,18 @@ class SDMWebApi:
             num_threads=threads,
             max_retries=retries,
             bandwidth_limit=bandwidth_limit,
+            on_progress=self._on_progress,
             on_complete=self._on_complete,
             on_error=self._on_error,
         )
+
+    def _on_progress(self, task: DownloadTask):
+        now = time.time()
+        task_id = id(task)
+        if now - self._last_progress_save.get(task_id, 0) < 1.0:
+            return
+        self._last_progress_save[task_id] = now
+        self._update_history_row(task)
 
     def _on_complete(self, task: DownloadTask):
         self._update_history_row(task)
@@ -504,11 +515,13 @@ class SDMWebApi:
             "filename": entry.filename or "—",
             "dest_path": entry.dest_path,
             "total_size": entry.total_size or 0,
+            "downloaded_bytes": entry.downloaded_bytes or 0,
             "status": entry.status,
             "start_time": (entry.start_time or "—")[:19],
             "end_time": (entry.end_time or "—")[:19],
             "num_threads": entry.num_threads,
             "error": entry.error,
+            "segments": json.loads(entry.segments_json or "[]"),
         }
 
     def _expand_path(self, path: str) -> str:

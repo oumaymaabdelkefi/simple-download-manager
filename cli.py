@@ -49,6 +49,8 @@ def print_progress(task: DownloadTask):
 def cmd_download(args):
     manager = DownloadManager()
     done_event = threading.Event()
+    row_id = None
+    last_history_update = 0.0
 
     def on_complete(task: DownloadTask):
         print(f"\n✅ Done: {task.dest_path}  ({format_size(task.total_size)})")
@@ -58,6 +60,13 @@ def cmd_download(args):
         print(f"\n❌ Error: {task.error}")
         done_event.set()
 
+    def on_progress(task: DownloadTask):
+        nonlocal last_history_update
+        print_progress(task)
+        if row_id and time.time() - last_history_update >= 1.0:
+            update_download(row_id, task)
+            last_history_update = time.time()
+
     task = manager.create_task(
         url=args.url,
         dest_dir=args.output,
@@ -65,7 +74,7 @@ def cmd_download(args):
         num_threads=args.threads,
         max_retries=args.retries,
         bandwidth_limit=int(args.bandwidth * 1024 * 1024) if args.bandwidth else None,
-        on_progress=print_progress,
+        on_progress=on_progress,
         on_complete=on_complete,
         on_error=on_error,
     )

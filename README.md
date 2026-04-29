@@ -34,6 +34,7 @@
 | Automatic retry with backoff | ✅ Optional |
 | Per-download and global bandwidth limiting | ✅ Optional |
 | Download history (SQLite) | ✅ Optional |
+| Live segment progress persistence | ✅ Optional |
 | Persistent scheduled queue | ✅ Optional |
 | CLI interface | ✅ Core |
 | Tkinter GUI | ✅ Optional |
@@ -196,6 +197,7 @@ python ui/gui.py
 - The browser UI Queue tab manages pending downloads, supports reordering, and starts queued items as active slots become available
 - Scheduled/pending queue items are persisted in SQLite and restored after app restart
 - The browser UI supports a global MB/s cap shared across all active downloads
+- Download history stores downloaded bytes and per-segment progress metadata while downloads are running
 
 ---
 

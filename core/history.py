@@ -20,11 +20,13 @@ class HistoryEntry:
     filename: str
     dest_path: str
     total_size: int
+    downloaded_bytes: int
     status: str
     start_time: Optional[str]
     end_time: Optional[str]
     num_threads: int
     error: Optional[str]
+    segments_json: Optional[str]
 
 
 @dataclass
@@ -56,13 +58,17 @@ def init_db():
                 filename    TEXT,
                 dest_path   TEXT,
                 total_size  INTEGER DEFAULT 0,
+                downloaded_bytes INTEGER DEFAULT 0,
                 status      TEXT DEFAULT 'pending',
                 start_time  TEXT,
                 end_time    TEXT,
                 num_threads INTEGER DEFAULT 4,
-                error       TEXT
+                error       TEXT,
+                segments_json TEXT
             )
         """)
+        _ensure_column(conn, "downloads", "downloaded_bytes", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "downloads", "segments_json", "TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS download_queue (
                 id              TEXT PRIMARY KEY,
@@ -79,6 +85,26 @@ def init_db():
         conn.commit()
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str):
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _segments_json(task) -> str:
+    return json.dumps([
+        {
+            "index": segment.index,
+            "start": segment.start,
+            "end": segment.end,
+            "downloaded": segment.downloaded,
+            "status": segment.status.value,
+            "retries": segment.retries,
+        }
+        for segment in getattr(task, "segments", [])
+    ])
+
+
 def save_download(task) -> int:
     """Insert or update a download record. Returns row id."""
     start = datetime.fromtimestamp(task.start_time).isoformat() if task.start_time else None
@@ -86,18 +112,20 @@ def save_download(task) -> int:
 
     with _get_conn() as conn:
         cur = conn.execute("""
-            INSERT INTO downloads (url, filename, dest_path, total_size, status, start_time, end_time, num_threads, error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO downloads (url, filename, dest_path, total_size, downloaded_bytes, status, start_time, end_time, num_threads, error, segments_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task.url,
             task.filename,
             task.dest_path,
             task.total_size,
+            task.downloaded_bytes,
             task.status.value,
             start,
             end,
             task.num_threads,
             task.error,
+            _segments_json(task),
         ))
         conn.commit()
         return cur.lastrowid
@@ -110,9 +138,9 @@ def update_download(row_id: int, task):
     with _get_conn() as conn:
         conn.execute("""
             UPDATE downloads
-            SET total_size=?, status=?, start_time=?, end_time=?, error=?
+            SET total_size=?, downloaded_bytes=?, status=?, start_time=?, end_time=?, error=?, segments_json=?
             WHERE id=?
-        """, (task.total_size, task.status.value, start, end, task.error, row_id))
+        """, (task.total_size, task.downloaded_bytes, task.status.value, start, end, task.error, _segments_json(task), row_id))
         conn.commit()
 
 

@@ -13,7 +13,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from core.downloader import DownloadManager, DownloadStatus
+from core.downloader import DownloadManager, DownloadStatus, SegmentInfo
 import core.history as history
 
 # ─── Minimal test HTTP server ─────────────────────────────────────────────────
@@ -246,6 +246,42 @@ class TestDownloadManager(unittest.TestCase):
 
                 history.delete_queue_entry("queue-test")
                 self.assertEqual(history.get_queue_entries(), [])
+        finally:
+            history.DB_PATH = old_db_path
+
+    def test_history_persists_segment_progress_state(self):
+        old_db_path = history.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                history.DB_PATH = os.path.join(tmp, "history.db")
+                history.init_db()
+
+                manager = DownloadManager()
+                task = manager.create_task(self.url, dest_dir=tmp,
+                                            filename="tracked.bin", num_threads=4)
+                task.total_size = len(TEST_CONTENT)
+                task.downloaded_bytes = 128
+                task.status = DownloadStatus.DOWNLOADING
+                task.segments = [
+                    SegmentInfo(index=0, start=0, end=255,
+                                downloaded=128, status=DownloadStatus.DOWNLOADING,
+                                retries=1),
+                    SegmentInfo(index=1, start=256, end=511,
+                                downloaded=0, status=DownloadStatus.PENDING),
+                ]
+                row_id = history.save_download(task)
+
+                task.downloaded_bytes = 256
+                task.segments[0].downloaded = 256
+                task.segments[0].status = DownloadStatus.COMPLETED
+                history.update_download(row_id, task)
+
+                entry = history.get_history(1)[0]
+                segments = history.json.loads(entry.segments_json)
+                self.assertEqual(entry.downloaded_bytes, 256)
+                self.assertEqual(segments[0]["downloaded"], 256)
+                self.assertEqual(segments[0]["status"], "completed")
+                self.assertEqual(segments[1]["status"], "pending")
         finally:
             history.DB_PATH = old_db_path
 
