@@ -146,18 +146,21 @@ class SegmentDownloader(threading.Thread):
         self.session = session
 
     def run(self):
-        while self.segment.retries <= self.task.max_retries:
-            try:
-                self._download()
-                return
-            except Exception as e:
-                self.segment.retries += 1
-                if self.segment.retries > self.task.max_retries:
-                    self.segment.status = DownloadStatus.FAILED
-                    with self.task._lock:
-                        self.task.error = f"Segment {self.segment.index} failed: {e}"
+        try:
+            while self.segment.retries <= self.task.max_retries:
+                try:
+                    self._download()
                     return
-                time.sleep(2 ** self.segment.retries)  # Exponential backoff
+                except Exception as e:
+                    self.segment.retries += 1
+                    if self.segment.retries > self.task.max_retries:
+                        self.segment.status = DownloadStatus.FAILED
+                        with self.task._lock:
+                            self.task.error = f"Segment {self.segment.index} failed: {e}"
+                        return
+                    time.sleep(2 ** self.segment.retries)  # Exponential backoff
+        finally:
+            self.session.close()
 
     def _download(self):
         segment_size = self.segment.end - self.segment.start + 1
@@ -250,22 +253,21 @@ class DownloadManager:
 
     def _run_task(self, task: DownloadTask):
         try:
-            session = requests.Session()
+            with requests.Session() as session:
+                # HEAD request to get file size and check range support
+                head = session.head(task.url, allow_redirects=True, timeout=15)
+                head.raise_for_status()
 
-            # HEAD request to get file size and check range support
-            head = session.head(task.url, allow_redirects=True, timeout=15)
-            head.raise_for_status()
+                task.total_size = int(head.headers.get("Content-Length", 0))
+                accepts_ranges = head.headers.get("Accept-Ranges", "none").lower() == "bytes"
 
-            task.total_size = int(head.headers.get("Content-Length", 0))
-            accepts_ranges = head.headers.get("Accept-Ranges", "none").lower() == "bytes"
+                task.start_time = time.time()
+                task.status = DownloadStatus.DOWNLOADING
 
-            task.start_time = time.time()
-            task.status = DownloadStatus.DOWNLOADING
-
-            if task.total_size > 0 and accepts_ranges and task.num_threads > 1:
-                self._segmented_download(task, session)
-            else:
-                self._simple_download(task, session)
+                if task.total_size > 0 and accepts_ranges and task.num_threads > 1:
+                    self._segmented_download(task, session)
+                else:
+                    self._simple_download(task, session)
 
             if task.status == DownloadStatus.CANCELLED:
                 self._cleanup_parts(task)

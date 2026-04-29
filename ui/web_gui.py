@@ -501,6 +501,7 @@ class SDMWebApi:
         task = item.get("task")
         if task:
             data = self._serialize_task(download_id, task)
+            data["history_id"] = item.get("row_id")
             data["scheduled_at"] = item.get("scheduled_at")
             return data
 

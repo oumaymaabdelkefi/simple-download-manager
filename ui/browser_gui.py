@@ -23,14 +23,17 @@ class SDMBrowserHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        path = urlparse(self.path).path
-        if path in ("/", "/index.html"):
-            self._send_file(self.html_path, "text/html; charset=utf-8")
+        try:
+            path = urlparse(self.path).path
+            if path in ("/", "/index.html"):
+                self._send_file(self.html_path, "text/html; charset=utf-8")
+                return
+            if path == "/api/get_state":
+                self._send_json(self.api.get_state())
+                return
+            self.send_error(404)
+        except (BrokenPipeError, ConnectionResetError):
             return
-        if path == "/api/get_state":
-            self._send_json(self.api.get_state())
-            return
-        self.send_error(404)
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -55,8 +58,13 @@ class SDMBrowserHandler(BaseHTTPRequestHandler):
             else:
                 result = method(payload)
             self._send_json(result)
+        except (BrokenPipeError, ConnectionResetError):
+            return
         except Exception as exc:
-            self._send_json({"ok": False, "error": str(exc)}, status=500)
+            try:
+                self._send_json({"ok": False, "error": str(exc)}, status=500)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
     def _read_json(self):
         length = int(self.headers.get("Content-Length", "0") or 0)
