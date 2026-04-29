@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from core.downloader import DownloadManager, DownloadStatus, SegmentInfo
 import core.history as history
+from ui.web_gui import SDMWebApi
 
 # ─── Minimal test HTTP server ─────────────────────────────────────────────────
 
@@ -362,6 +363,26 @@ class TestDownloadManager(unittest.TestCase):
         manager.set_global_bandwidth_limit(2048)
         self.assertEqual(task1.global_limiter.rate, 2048)
         self.assertEqual(task2.global_limiter.rate, 2048)
+
+    def test_retry_history_more_threads_increases_thread_count(self):
+        old_db_path = history.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                history.DB_PATH = os.path.join(tmp, "history.db")
+                history.init_db()
+                manager = DownloadManager()
+                task = manager.create_task(self.url, dest_dir=tmp,
+                                            filename="retry.bin", num_threads=2)
+                task.status = DownloadStatus.FAILED
+                row_id = history.save_download(task)
+
+                api = SDMWebApi()
+                result = api.retry_history_more_threads(row_id)
+
+                self.assertTrue(result["ok"])
+                self.assertGreater(result["threads"], 2)
+        finally:
+            history.DB_PATH = old_db_path
 
 
 if __name__ == "__main__":

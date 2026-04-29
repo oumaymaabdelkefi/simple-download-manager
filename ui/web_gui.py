@@ -195,17 +195,35 @@ class SDMWebApi:
             return {"ok": False, "error": str(exc)}
 
     def resume_history(self, row_id: int) -> dict[str, Any]:
+        return self._start_from_history(row_id, mode="resume")
+
+    def retry_history(self, row_id: int) -> dict[str, Any]:
+        return self._start_from_history(row_id, mode="retry")
+
+    def retry_history_more_threads(self, row_id: int) -> dict[str, Any]:
+        return self._start_from_history(row_id, mode="more_threads")
+
+    def retry_history_from_parts(self, row_id: int) -> dict[str, Any]:
+        return self._start_from_history(row_id, mode="resume")
+
+    def _start_from_history(self, row_id: int, mode: str) -> dict[str, Any]:
         entry = next((item for item in get_history(1000) if item.id == int(row_id)), None)
         if entry is None:
             return {"ok": False, "error": "History entry not found."}
 
         download_id = uuid.uuid4().hex[:10]
+        threads = entry.num_threads
+        if mode == "more_threads":
+            threads = min(16, max(entry.num_threads + 2, entry.num_threads * 2))
+        if mode in ("retry", "more_threads"):
+            self._delete_part_files(entry.dest_path)
+
         try:
             task = self._create_task(
                 entry.url,
                 os.path.dirname(entry.dest_path) or ".",
                 entry.filename,
-                entry.num_threads,
+                threads,
                 3,
                 None,
             )
@@ -217,7 +235,7 @@ class SDMWebApi:
             self._downloads[download_id] = {"task": task, "row_id": row_id, "visible": True}
             self._task_ids[id(task)] = download_id
         self.manager.start(task)
-        return {"ok": True, "id": download_id, "filename": task.filename}
+        return {"ok": True, "id": download_id, "filename": task.filename, "threads": threads}
 
     def get_state(self) -> dict[str, Any]:
         with self._lock:
@@ -589,6 +607,18 @@ if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath }
             except (FileNotFoundError, subprocess.CalledProcessError):
                 continue
         raise RuntimeError("No supported folder picker found.")
+
+    def _delete_part_files(self, dest_path: str):
+        directory = os.path.dirname(dest_path) or "."
+        basename = os.path.basename(dest_path)
+        if not os.path.isdir(directory):
+            return
+        for name in os.listdir(directory):
+            if name.startswith(f"{basename}.part"):
+                try:
+                    os.remove(os.path.join(directory, name))
+                except OSError:
+                    pass
 
     def _clamp_int(self, value: Any, low: int, high: int, default: int) -> int:
         try:
