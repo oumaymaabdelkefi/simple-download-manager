@@ -229,6 +229,70 @@ class TestDownloadManager(unittest.TestCase):
         finally:
             history.DB_PATH = old_db_path
 
+    def test_queue_order_persists_across_reload(self):
+        old_db_path = history.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                history.DB_PATH = os.path.join(tmp, "history.db")
+                history.init_db()
+
+                entries = [
+                    history.QueueEntry(
+                        id="third",
+                        url="http://127.0.0.1/third.bin",
+                        dest_dir=tmp,
+                        filename="third.bin",
+                        num_threads=4,
+                        max_retries=3,
+                        bandwidth_limit=None,
+                        scheduled_at=None,
+                        queued_at=3.0,
+                    ),
+                    history.QueueEntry(
+                        id="first",
+                        url="http://127.0.0.1/first.bin",
+                        dest_dir=tmp,
+                        filename="first.bin",
+                        num_threads=4,
+                        max_retries=3,
+                        bandwidth_limit=None,
+                        scheduled_at=None,
+                        queued_at=1.0,
+                    ),
+                    history.QueueEntry(
+                        id="second",
+                        url="http://127.0.0.1/second.bin",
+                        dest_dir=tmp,
+                        filename="second.bin",
+                        num_threads=4,
+                        max_retries=3,
+                        bandwidth_limit=None,
+                        scheduled_at=None,
+                        queued_at=2.0,
+                    ),
+                ]
+
+                for entry in entries:
+                    history.save_queue_entry(entry)
+
+                self.assertEqual(
+                    [entry.id for entry in history.get_queue_entries()],
+                    ["first", "second", "third"],
+                )
+
+                history.update_queue_order([
+                    ("third", 1.0),
+                    ("first", 2.0),
+                    ("second", 3.0),
+                ])
+
+                self.assertEqual(
+                    [entry.id for entry in history.get_queue_entries()],
+                    ["third", "first", "second"],
+                )
+        finally:
+            history.DB_PATH = old_db_path
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
