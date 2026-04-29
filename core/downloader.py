@@ -20,6 +20,40 @@ class DownloadStatus(Enum):
     CANCELLED = "cancelled"
 
 
+class BandwidthLimiter:
+    """Shared token bucket for limiting combined throughput."""
+
+    def __init__(self, rate: Optional[int] = None):
+        self.rate = rate
+        self._tokens = float(rate or 0)
+        self._updated_at = time.time()
+        self._lock = threading.Lock()
+
+    def set_rate(self, rate: Optional[int]):
+        with self._lock:
+            self.rate = rate
+            self._tokens = float(rate or 0)
+            self._updated_at = time.time()
+
+    def wait(self, size: int):
+        while True:
+            with self._lock:
+                if not self.rate or self.rate <= 0:
+                    return
+
+                now = time.time()
+                elapsed = now - self._updated_at
+                self._updated_at = now
+                self._tokens = min(float(self.rate), self._tokens + elapsed * self.rate)
+
+                if self._tokens >= size:
+                    self._tokens -= size
+                    return
+
+                delay = (size - self._tokens) / self.rate
+            time.sleep(min(delay, 1.0))
+
+
 @dataclass
 class SegmentInfo:
     index: int
@@ -52,6 +86,7 @@ class DownloadTask:
     on_progress: Optional[Callable] = None
     on_complete: Optional[Callable] = None
     on_error: Optional[Callable] = None
+    global_limiter: Optional[BandwidthLimiter] = None
 
     # Threading
     _pause_event: threading.Event = field(default_factory=threading.Event)
@@ -155,6 +190,8 @@ class SegmentDownloader(threading.Thread):
                         self.segment.downloaded += size
                         with self.task._lock:
                             self.task.downloaded_bytes += size
+                        if self.task.global_limiter:
+                            self.task.global_limiter.wait(size)
                         self.task.throttle()
                         if self.task.on_progress:
                             self.task.on_progress(self.task)
@@ -165,9 +202,13 @@ class SegmentDownloader(threading.Thread):
 class DownloadManager:
     """Orchestrates multi-threaded segmented downloads."""
 
-    def __init__(self):
+    def __init__(self, global_bandwidth_limit: Optional[int] = None):
         self._tasks: dict[str, DownloadTask] = {}
         self._lock = threading.Lock()
+        self.global_limiter = BandwidthLimiter(global_bandwidth_limit)
+
+    def set_global_bandwidth_limit(self, limit: Optional[int]):
+        self.global_limiter.set_rate(limit)
 
     def create_task(
         self,
@@ -195,6 +236,7 @@ class DownloadManager:
             on_progress=on_progress,
             on_complete=on_complete,
             on_error=on_error,
+            global_limiter=self.global_limiter,
         )
 
         with self._lock:
@@ -288,6 +330,8 @@ class DownloadManager:
                         seg.downloaded += size
                         with task._lock:
                             task.downloaded_bytes += size
+                        if task.global_limiter:
+                            task.global_limiter.wait(size)
                         task.throttle()
                         if task.on_progress:
                             task.on_progress(task)

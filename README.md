@@ -32,7 +32,7 @@
 | Cancel download | ✅ Core |
 | Progress bar (%, speed, ETA) | ✅ Optional |
 | Automatic retry with backoff | ✅ Optional |
-| Bandwidth limiting | ✅ Optional |
+| Per-download and global bandwidth limiting | ✅ Optional |
 | Download history (SQLite) | ✅ Optional |
 | Persistent scheduled queue | ✅ Optional |
 | CLI interface | ✅ Core |
@@ -195,6 +195,7 @@ python ui/gui.py
 - Interrupted downloads can be resumed from History if their `.partN` files are still present
 - The browser UI Queue tab manages pending downloads, supports reordering, and starts queued items as active slots become available
 - Scheduled/pending queue items are persisted in SQLite and restored after app restart
+- The browser UI supports a global MB/s cap shared across all active downloads
 
 ---
 

@@ -293,6 +293,20 @@ class TestDownloadManager(unittest.TestCase):
         finally:
             history.DB_PATH = old_db_path
 
+    def test_global_bandwidth_limiter_is_shared_by_tasks(self):
+        manager = DownloadManager(global_bandwidth_limit=1024)
+        task1 = manager.create_task(self.url, dest_dir=self.tmpdir,
+                                     filename="global_limit_1.bin")
+        task2 = manager.create_task(self.url, dest_dir=self.tmpdir,
+                                     filename="global_limit_2.bin")
+
+        self.assertIs(task1.global_limiter, task2.global_limiter)
+        self.assertEqual(manager.global_limiter.rate, 1024)
+
+        manager.set_global_bandwidth_limit(2048)
+        self.assertEqual(task1.global_limiter.rate, 2048)
+        self.assertEqual(task2.global_limiter.rate, 2048)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

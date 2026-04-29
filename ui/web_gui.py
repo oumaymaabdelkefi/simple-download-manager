@@ -159,6 +159,11 @@ class SDMWebApi:
         clear_history()
         return {"ok": True}
 
+    def set_global_bandwidth_limit(self, value: Any) -> dict[str, Any]:
+        limit = self._parse_bandwidth_limit(value)
+        self.manager.set_global_bandwidth_limit(limit)
+        return {"ok": True, "global_bandwidth_limit": limit}
+
     def start_queued(self, download_id: str) -> dict[str, Any]:
         return self._start_queued_download(download_id, force=True)
 
@@ -223,6 +228,7 @@ class SDMWebApi:
             "downloads": downloads,
             "queue": [item for item in downloads if item["status"] == DownloadStatus.PENDING.value],
             "max_active_downloads": self.max_active_downloads,
+            "global_bandwidth_limit": self.manager.global_limiter.rate,
             "history": [self._serialize_history(entry) for entry in get_history(100)],
         }
 
