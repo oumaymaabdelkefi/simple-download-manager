@@ -299,7 +299,8 @@ class DownloadManager:
 
         self._load_existing_parts(task)
 
-        workers = [SegmentDownloader(task, seg, session) for seg in task.segments]
+        # requests.Session is not thread-safe; each segment worker gets its own session.
+        workers = [SegmentDownloader(task, seg, requests.Session()) for seg in task.segments]
         for w in workers:
             w.start()
         for w in workers:

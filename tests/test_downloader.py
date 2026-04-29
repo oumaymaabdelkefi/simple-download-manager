@@ -174,6 +174,26 @@ class TestDownloadManager(unittest.TestCase):
         with open(task.dest_path, "rb") as f:
             self.assertEqual(f.read(), TEST_CONTENT)
 
+    def test_resume_redownloads_missing_part_files(self):
+        filename = "test_missing_parts_resume.bin"
+        dest_path = os.path.join(self.tmpdir, filename)
+        segment_size = len(TEST_CONTENT) // 4
+
+        # Simulate restart with only one preserved segment. Missing parts must
+        # be downloaded again instead of causing resume to fail.
+        with open(f"{dest_path}.part0", "wb") as f:
+            f.write(TEST_CONTENT[:segment_size])
+
+        manager = DownloadManager()
+        task = manager.create_task(self.url, dest_dir=self.tmpdir,
+                                    filename=filename, num_threads=4)
+        manager.start(task)
+        self._wait_for(task)
+
+        self.assertEqual(task.status, DownloadStatus.COMPLETED)
+        with open(task.dest_path, "rb") as f:
+            self.assertEqual(f.read(), TEST_CONTENT)
+
     def test_multi_thread_faster_than_single(self):
         """Multi-thread should complete no slower than single thread (same local server)."""
         manager = DownloadManager()

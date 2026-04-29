@@ -242,7 +242,7 @@ Content-Length: 300000000
 
 Each `SegmentDownloader` thread requests its own byte range independently. Segments are saved to temporary `.partN` files and merged in order once all threads complete.
 
-If SDM closes before a download finishes, the `.partN` files remain on disk. Starting the same download again, or using **Resume** from the browser UI History tab, reuses those existing part files and only downloads the missing byte ranges.
+If SDM closes before a download finishes, the `.partN` files remain on disk. Starting the same download again, or using **Resume** from the browser UI History tab, reuses existing part files and only downloads missing byte ranges. If a part file was deleted, SDM redownloads that missing segment instead of failing the resume operation.
 
 ---
 
