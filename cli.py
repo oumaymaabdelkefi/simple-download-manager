@@ -160,6 +160,10 @@ def cmd_queue(args):
 
     entries = get_queue_entries()
 
+    if args.queue_command == "run":
+        cmd_queue_run(args, entries)
+        return
+
     if args.queue_command == "list":
         if not entries:
             print("Queue is empty.")
@@ -206,6 +210,99 @@ def cmd_queue(args):
             bandwidth=(selected.bandwidth_limit / 1024 / 1024) if selected.bandwidth_limit else 0,
         )
         cmd_download(download_args)
+
+
+def cmd_queue_run(args, entries):
+    now = time.time()
+    pending = [
+        entry for entry in entries
+        if args.force or not entry.scheduled_at or entry.scheduled_at <= now
+    ]
+    if not pending:
+        print("No queued downloads are ready to run.")
+        return
+
+    global_limit = int(args.global_bandwidth * 1024 * 1024) if args.global_bandwidth else None
+    manager = DownloadManager(global_bandwidth_limit=global_limit)
+    max_active = max(1, args.max_active)
+    lock = threading.Lock()
+    done_event = threading.Event()
+    active: dict[int, tuple[DownloadTask, int, QueueEntry]] = {}
+    last_history_update: dict[int, float] = {}
+    total = len(pending)
+    completed = 0
+
+    def on_progress(task: DownloadTask):
+        task_id = id(task)
+        with lock:
+            item = active.get(task_id)
+        if not item:
+            return
+        _, row_id, _ = item
+        if time.time() - last_history_update.get(task_id, 0) >= 1.0:
+            update_download(row_id, task)
+            last_history_update[task_id] = time.time()
+
+    def finish_task(task: DownloadTask):
+        nonlocal completed
+        with lock:
+            item = active.pop(id(task), None)
+            completed += 1
+        if item:
+            _, row_id, entry = item
+            update_download(row_id, task)
+            status = "Done" if task.status == DownloadStatus.COMPLETED else "Failed"
+            print(f"\n{status}: {entry.filename or entry.url}")
+        start_next()
+        with lock:
+            if not active and not pending:
+                done_event.set()
+
+    def start_entry(entry: QueueEntry):
+        task = manager.create_task(
+            url=entry.url,
+            dest_dir=entry.dest_dir,
+            filename=entry.filename,
+            num_threads=entry.num_threads,
+            max_retries=entry.max_retries,
+            bandwidth_limit=entry.bandwidth_limit,
+            on_progress=on_progress,
+            on_complete=finish_task,
+            on_error=finish_task,
+        )
+        row_id = save_download(task)
+        with lock:
+            active[id(task)] = (task, row_id, entry)
+        delete_queue_entry(entry.id)
+        manager.start(task)
+        print(f"Started: {entry.filename or entry.url}")
+
+    def start_next():
+        while True:
+            with lock:
+                if len(active) >= max_active or not pending:
+                    return
+                entry = pending.pop(0)
+            start_entry(entry)
+
+    print(f"Running {total} queued download(s) with max {max_active} active.")
+    if global_limit:
+        print(f"Global bandwidth limit: {args.global_bandwidth:g} MB/s")
+    start_next()
+
+    try:
+        while not done_event.wait(timeout=1.0):
+            with lock:
+                active_tasks = [item[0] for item in active.values()]
+            total_speed = sum(task.speed for task in active_tasks)
+            print(f"\rActive: {len(active_tasks)}  Completed: {completed}/{total}  Speed: {format_size(int(total_speed))}/s", end="", flush=True)
+    except KeyboardInterrupt:
+        print("\nCancelling active queued downloads...")
+        with lock:
+            active_tasks = [item[0] for item in active.values()]
+        for task in active_tasks:
+            manager.cancel(task)
+    print("\nQueue run finished.")
 
 
 def main():
@@ -256,6 +353,11 @@ def main():
     q_start = queue_sub.add_parser("start", help="Start a queued download")
     q_start.add_argument("id", nargs="?", help="Queue entry ID; defaults to first item")
     q_start.add_argument("--force", action="store_true", help="Start even if scheduled for later")
+
+    q_run = queue_sub.add_parser("run", help="Run queued downloads with shared limits")
+    q_run.add_argument("--max-active", type=int, default=2, help="Maximum active queued downloads (default: 2)")
+    q_run.add_argument("--global-bandwidth", type=float, default=0, help="Shared bandwidth limit in MB/s (default: unlimited)")
+    q_run.add_argument("--force", action="store_true", help="Run scheduled future items immediately")
 
     args = parser.parse_args()
 

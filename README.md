@@ -167,6 +167,7 @@ python cli.py queue list
 python cli.py queue up <queue-id>
 python cli.py queue down <queue-id>
 python cli.py queue start <queue-id>
+python cli.py queue run --max-active 2 --global-bandwidth 3
 python cli.py queue remove <queue-id>
 ```
 
@@ -205,6 +206,7 @@ python ui/gui.py
 - The browser UI Queue tab manages pending downloads, supports reordering, and starts queued items as active slots become available
 - Scheduled/pending queue items are persisted in SQLite and restored after app restart
 - The same persistent queue can be managed from the CLI with `python cli.py queue ...`
+- `python cli.py queue run` starts multiple queued downloads in one process, so the CLI can enforce a shared global bandwidth cap across active queued downloads
 - The browser UI supports a global MB/s cap shared across all active downloads
 - Download history stores downloaded bytes and per-segment progress metadata while downloads are running
 

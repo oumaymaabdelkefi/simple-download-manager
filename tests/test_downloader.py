@@ -52,7 +52,7 @@ class RangeHandler(http.server.BaseHTTPRequestHandler):
 
 
 def start_test_server():
-    server = http.server.HTTPServer(("127.0.0.1", TEST_PORT), RangeHandler)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", TEST_PORT), RangeHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server
