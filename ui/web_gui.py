@@ -55,7 +55,10 @@ class SDMWebApi:
         retries = self._clamp_int(payload.get("retries"), 0, 10, 3)
         bandwidth_limit = self._parse_bandwidth_limit(payload.get("bandwidth_limit"))
         download_id = uuid.uuid4().hex[:10]
-        scheduled_at = self._parse_schedule(payload.get("schedule"))
+        try:
+            scheduled_at = self._parse_schedule(payload.get("schedule"))
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
 
         should_queue = (scheduled_at and scheduled_at > time.time()) or self._active_count() >= self.max_active_downloads
         if should_queue:
@@ -578,10 +581,39 @@ class SDMWebApi:
         value = str(value or "").strip()
         if not value:
             return None
-        try:
-            return datetime.fromisoformat(value).timestamp()
-        except ValueError:
-            return None
+        normalized = value.replace("Z", "+00:00")
+        candidates = [normalized]
+        if "T" in normalized:
+            candidates.append(normalized.replace("T", " "))
+        formats = [
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+            "%m/%d/%Y %H:%M",
+            "%m/%d/%Y %I:%M %p",
+            "%Y-%m-%d",
+            "%m/%d/%Y",
+        ]
+        parsed = None
+        for candidate in candidates:
+            try:
+                parsed = datetime.fromisoformat(candidate)
+                break
+            except ValueError:
+                pass
+            for fmt in formats:
+                try:
+                    parsed = datetime.strptime(candidate, fmt)
+                    break
+                except ValueError:
+                    pass
+            if parsed is not None:
+                break
+        if parsed is None:
+            raise ValueError("Schedule must be a valid future date and time.")
+        timestamp = parsed.timestamp()
+        if timestamp <= time.time():
+            raise ValueError("Schedule time must be in the future.")
+        return timestamp
 
     def _parse_bandwidth_limit(self, value: Any) -> int | None:
         try:

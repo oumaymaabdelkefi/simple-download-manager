@@ -10,6 +10,7 @@ import threading
 import unittest
 import http.server
 import tempfile
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -403,6 +404,42 @@ class TestDownloadManager(unittest.TestCase):
                 self.assertIn("does not exist", result["error"])
         finally:
             history.DB_PATH = old_db_path
+
+    def test_web_api_schedules_future_download(self):
+        old_db_path = history.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                history.DB_PATH = os.path.join(tmp, "history.db")
+                history.init_db()
+                api = SDMWebApi()
+                schedule = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M")
+
+                result = api.add_download({
+                    "url": self.url,
+                    "dest_dir": tmp,
+                    "filename": "scheduled.bin",
+                    "threads": 4,
+                    "retries": 3,
+                    "schedule": schedule,
+                })
+
+                self.assertTrue(result["ok"])
+                self.assertTrue(result["scheduled"])
+                self.assertEqual(len(history.get_queue_entries()), 1)
+        finally:
+            history.DB_PATH = old_db_path
+
+    def test_web_api_rejects_invalid_schedule(self):
+        api = SDMWebApi()
+        result = api.add_download({
+            "url": self.url,
+            "dest_dir": self.tmpdir,
+            "filename": "invalid-schedule.bin",
+            "schedule": "not-a-date",
+        })
+
+        self.assertFalse(result["ok"])
+        self.assertIn("Schedule", result["error"])
 
 
 if __name__ == "__main__":
