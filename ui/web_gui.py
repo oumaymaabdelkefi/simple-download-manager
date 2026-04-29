@@ -206,8 +206,30 @@ class SDMWebApi:
     def retry_history_from_parts(self, row_id: int) -> dict[str, Any]:
         return self._start_from_history(row_id, mode="resume")
 
+    def open_history_file(self, row_id: int) -> dict[str, Any]:
+        entry = self._get_history_entry(row_id)
+        if entry is None:
+            return {"ok": False, "error": "History entry not found."}
+        return self._open_path(entry.dest_path)
+
+    def open_history_folder(self, row_id: int) -> dict[str, Any]:
+        entry = self._get_history_entry(row_id)
+        if entry is None:
+            return {"ok": False, "error": "History entry not found."}
+        return self._open_path(os.path.dirname(entry.dest_path) or ".")
+
+    def copy_history_path(self, row_id: int) -> dict[str, Any]:
+        entry = self._get_history_entry(row_id)
+        if entry is None:
+            return {"ok": False, "error": "History entry not found."}
+        try:
+            self._write_clipboard(entry.dest_path)
+            return {"ok": True, "path": entry.dest_path}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def _start_from_history(self, row_id: int, mode: str) -> dict[str, Any]:
-        entry = next((item for item in get_history(1000) if item.id == int(row_id)), None)
+        entry = self._get_history_entry(row_id)
         if entry is None:
             return {"ok": False, "error": "History entry not found."}
 
@@ -236,6 +258,9 @@ class SDMWebApi:
             self._task_ids[id(task)] = download_id
         self.manager.start(task)
         return {"ok": True, "id": download_id, "filename": task.filename, "threads": threads}
+
+    def _get_history_entry(self, row_id: int):
+        return next((item for item in get_history(1000) if item.id == int(row_id)), None)
 
     def get_state(self) -> dict[str, Any]:
         with self._lock:
@@ -578,6 +603,36 @@ class SDMWebApi:
             except (FileNotFoundError, subprocess.CalledProcessError):
                 continue
         raise RuntimeError("No supported clipboard reader found.")
+
+    def _write_clipboard(self, text: str):
+        if sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=text, text=True, check=True)
+            return
+        if sys.platform.startswith("win"):
+            command = ["powershell", "-NoProfile", "-Command", "Set-Clipboard"]
+            subprocess.run(command, input=text, text=True, check=True)
+            return
+        for command in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
+            try:
+                subprocess.run(command, input=text, text=True, check=True)
+                return
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                continue
+        raise RuntimeError("No supported clipboard writer found.")
+
+    def _open_path(self, path: str) -> dict[str, Any]:
+        if not os.path.exists(path):
+            return {"ok": False, "error": "Path does not exist."}
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            elif sys.platform.startswith("win"):
+                os.startfile(path)  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", path])
+            return {"ok": True, "path": path}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def _choose_directory(self, initial_dir: str) -> str:
         initial_dir = self._expand_path(initial_dir)

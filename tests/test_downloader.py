@@ -384,6 +384,26 @@ class TestDownloadManager(unittest.TestCase):
         finally:
             history.DB_PATH = old_db_path
 
+    def test_history_file_actions_validate_missing_path(self):
+        old_db_path = history.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                history.DB_PATH = os.path.join(tmp, "history.db")
+                history.init_db()
+                manager = DownloadManager()
+                task = manager.create_task(self.url, dest_dir=tmp,
+                                            filename="missing.bin", num_threads=2)
+                task.status = DownloadStatus.COMPLETED
+                row_id = history.save_download(task)
+
+                api = SDMWebApi()
+                result = api.open_history_file(row_id)
+
+                self.assertFalse(result["ok"])
+                self.assertIn("does not exist", result["error"])
+        finally:
+            history.DB_PATH = old_db_path
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
