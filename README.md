@@ -160,6 +160,14 @@ python cli.py history -n 50
 
 # Clear history
 python cli.py history --clear
+
+# Persistent queue management
+python cli.py queue add https://example.com/file.zip -o ~/Downloads --schedule 2026-04-29T15:30
+python cli.py queue list
+python cli.py queue up <queue-id>
+python cli.py queue down <queue-id>
+python cli.py queue start <queue-id>
+python cli.py queue remove <queue-id>
 ```
 
 **During download**: Press `Ctrl+C` once to pause. Press Enter to resume. Press `Ctrl+C` again to cancel.
@@ -196,6 +204,7 @@ python ui/gui.py
 - Interrupted downloads can be resumed from History if their `.partN` files are still present
 - The browser UI Queue tab manages pending downloads, supports reordering, and starts queued items as active slots become available
 - Scheduled/pending queue items are persisted in SQLite and restored after app restart
+- The same persistent queue can be managed from the CLI with `python cli.py queue ...`
 - The browser UI supports a global MB/s cap shared across all active downloads
 - Download history stores downloaded bytes and per-segment progress metadata while downloads are running
 
