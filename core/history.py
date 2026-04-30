@@ -5,12 +5,15 @@ Persistence module: saves and loads download history using SQLite.
 import sqlite3
 import json
 import os
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from typing import List, Optional
 from dataclasses import dataclass
 
 
 DB_PATH = os.path.join(os.path.expanduser("~"), ".sdm", "history.db")
+_DB_LOCK = threading.RLock()
 
 
 @dataclass
@@ -44,13 +47,20 @@ class QueueEntry:
 
 def _get_conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+@contextmanager
+def _connect():
+    with _DB_LOCK:
+        with _get_conn() as conn:
+            yield conn
+
+
 def init_db():
-    with _get_conn() as conn:
+    with _connect() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS downloads (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,7 +120,7 @@ def save_download(task) -> int:
     start = datetime.fromtimestamp(task.start_time).isoformat() if task.start_time else None
     end = datetime.fromtimestamp(task.end_time).isoformat() if task.end_time else None
 
-    with _get_conn() as conn:
+    with _connect() as conn:
         cur = conn.execute("""
             INSERT INTO downloads (url, filename, dest_path, total_size, downloaded_bytes, status, start_time, end_time, num_threads, error, segments_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -135,7 +145,7 @@ def update_download(row_id: int, task):
     start = datetime.fromtimestamp(task.start_time).isoformat() if task.start_time else None
     end = datetime.fromtimestamp(task.end_time).isoformat() if task.end_time else None
 
-    with _get_conn() as conn:
+    with _connect() as conn:
         conn.execute("""
             UPDATE downloads
             SET total_size=?, downloaded_bytes=?, status=?, start_time=?, end_time=?, error=?, segments_json=?
@@ -145,7 +155,7 @@ def update_download(row_id: int, task):
 
 
 def get_history(limit: int = 100) -> List[HistoryEntry]:
-    with _get_conn() as conn:
+    with _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM downloads ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
@@ -153,19 +163,19 @@ def get_history(limit: int = 100) -> List[HistoryEntry]:
 
 
 def delete_entry(row_id: int):
-    with _get_conn() as conn:
+    with _connect() as conn:
         conn.execute("DELETE FROM downloads WHERE id=?", (row_id,))
         conn.commit()
 
 
 def clear_history():
-    with _get_conn() as conn:
+    with _connect() as conn:
         conn.execute("DELETE FROM downloads")
         conn.commit()
 
 
 def save_queue_entry(entry: QueueEntry):
-    with _get_conn() as conn:
+    with _connect() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO download_queue
             (id, url, dest_dir, filename, num_threads, max_retries, bandwidth_limit, scheduled_at, queued_at)
@@ -185,7 +195,7 @@ def save_queue_entry(entry: QueueEntry):
 
 
 def get_queue_entries() -> List[QueueEntry]:
-    with _get_conn() as conn:
+    with _connect() as conn:
         rows = conn.execute(
             "SELECT * FROM download_queue ORDER BY queued_at ASC"
         ).fetchall()
@@ -193,13 +203,13 @@ def get_queue_entries() -> List[QueueEntry]:
 
 
 def delete_queue_entry(entry_id: str):
-    with _get_conn() as conn:
+    with _connect() as conn:
         conn.execute("DELETE FROM download_queue WHERE id=?", (entry_id,))
         conn.commit()
 
 
 def update_queue_order(entries: List[tuple[str, float]]):
-    with _get_conn() as conn:
+    with _connect() as conn:
         conn.executemany(
             "UPDATE download_queue SET queued_at=? WHERE id=?",
             [(queued_at, entry_id) for entry_id, queued_at in entries],
