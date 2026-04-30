@@ -21,7 +21,6 @@ from ui.web_gui import SDMWebApi
 # ─── Minimal test HTTP server ─────────────────────────────────────────────────
 
 TEST_CONTENT = b"A" * (1024 * 512)  # 512 KB of 'A's
-TEST_PORT = 18765
 
 
 class RangeHandler(http.server.BaseHTTPRequestHandler):
@@ -54,7 +53,7 @@ class RangeHandler(http.server.BaseHTTPRequestHandler):
 
 
 def start_test_server():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", TEST_PORT), RangeHandler)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RangeHandler)
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     return server
@@ -66,7 +65,7 @@ class TestDownloadManager(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server = start_test_server()
-        cls.url = f"http://127.0.0.1:{TEST_PORT}/testfile.bin"
+        cls.url = f"http://127.0.0.1:{cls.server.server_address[1]}/testfile.bin"
         cls.tmpdir = tempfile.mkdtemp()
 
     @classmethod
@@ -133,7 +132,8 @@ class TestDownloadManager(unittest.TestCase):
     def test_pause_and_resume(self):
         manager = DownloadManager()
         task = manager.create_task(self.url, dest_dir=self.tmpdir,
-                                    filename="test_pause.bin", num_threads=4)
+                                    filename="test_pause.bin", num_threads=4,
+                                    bandwidth_limit=64 * 1024)
         manager.start(task)
         # Wait until download is active
         deadline = time.time() + 5
@@ -348,6 +348,34 @@ class TestDownloadManager(unittest.TestCase):
                     [entry.id for entry in history.get_queue_entries()],
                     ["third", "first", "second"],
                 )
+        finally:
+            history.DB_PATH = old_db_path
+
+    def test_web_api_move_queue_updates_render_order(self):
+        old_db_path = history.DB_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                history.DB_PATH = os.path.join(tmp, "history.db")
+                history.init_db()
+                api = SDMWebApi()
+                api.max_active_downloads = 0
+
+                for name in ("first.bin", "second.bin", "third.bin"):
+                    result = api.add_download({
+                        "url": self.url,
+                        "dest_dir": tmp,
+                        "filename": name,
+                    })
+                    self.assertTrue(result["ok"])
+
+                queue = api.get_state()["queue"]
+                self.assertEqual([item["filename"] for item in queue], ["first.bin", "second.bin", "third.bin"])
+
+                third_id = queue[2]["id"]
+                api.move_queue_up(third_id)
+                queue = api.get_state()["queue"]
+
+                self.assertEqual([item["filename"] for item in queue], ["first.bin", "third.bin", "second.bin"])
         finally:
             history.DB_PATH = old_db_path
 

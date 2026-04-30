@@ -272,9 +272,13 @@ class SDMWebApi:
                 for download_id, item in self._downloads.items()
                 if item["visible"]
             ]
+        queue = sorted(
+            [item for item in downloads if item["status"] == DownloadStatus.PENDING.value],
+            key=lambda item: item.get("queued_at") or 0,
+        )
         return {
             "downloads": downloads,
-            "queue": [item for item in downloads if item["status"] == DownloadStatus.PENDING.value],
+            "queue": queue,
             "max_active_downloads": self.max_active_downloads,
             "global_bandwidth_limit": self.manager.global_limiter.rate,
             "history": [self._serialize_history(entry) for entry in get_history(100)],
