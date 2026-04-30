@@ -679,7 +679,7 @@ class SDMWebApi:
                 'POSIX path of (choose folder with prompt "Choose download folder" '
                 f'default location (POSIX file "{escaped_dir}" as alias))'
             )
-            return subprocess.check_output(["osascript", "-e", script], text=True).strip()
+            return subprocess.check_output(["osascript", "-e", script], text=True, stderr=subprocess.DEVNULL).strip()
 
         if sys.platform.startswith("win"):
             script = """

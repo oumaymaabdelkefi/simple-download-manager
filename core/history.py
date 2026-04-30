@@ -5,6 +5,7 @@ Persistence module: saves and loads download history using SQLite.
 import sqlite3
 import json
 import os
+import tempfile
 import threading
 from contextlib import contextmanager
 from datetime import datetime
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 
 
 DB_PATH = os.path.join(os.path.expanduser("~"), ".sdm", "history.db")
+FALLBACK_DB_PATH = os.path.join(tempfile.gettempdir(), "sdm-history.db")
 _DB_LOCK = threading.RLock()
 
 
@@ -46,10 +48,20 @@ class QueueEntry:
 
 
 def _get_conn() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
+    last_error = None
+    for path in (DB_PATH, FALLBACK_DB_PATH):
+        conn = None
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            conn = sqlite3.connect(path, timeout=30)
+            conn.row_factory = sqlite3.Row
+            _init_schema(conn)
+            return conn
+        except (OSError, sqlite3.Error) as exc:
+            if conn is not None:
+                conn.close()
+            last_error = exc
+    raise last_error or sqlite3.OperationalError("unable to open database file")
 
 
 @contextmanager
@@ -61,38 +73,42 @@ def _connect():
 
 def init_db():
     with _connect() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS downloads (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                url         TEXT NOT NULL,
-                filename    TEXT,
-                dest_path   TEXT,
-                total_size  INTEGER DEFAULT 0,
-                downloaded_bytes INTEGER DEFAULT 0,
-                status      TEXT DEFAULT 'pending',
-                start_time  TEXT,
-                end_time    TEXT,
-                num_threads INTEGER DEFAULT 4,
-                error       TEXT,
-                segments_json TEXT
-            )
-        """)
-        _ensure_column(conn, "downloads", "downloaded_bytes", "INTEGER DEFAULT 0")
-        _ensure_column(conn, "downloads", "segments_json", "TEXT")
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS download_queue (
-                id              TEXT PRIMARY KEY,
-                url             TEXT NOT NULL,
-                dest_dir        TEXT NOT NULL,
-                filename        TEXT,
-                num_threads     INTEGER DEFAULT 4,
-                max_retries     INTEGER DEFAULT 3,
-                bandwidth_limit INTEGER,
-                scheduled_at    REAL,
-                queued_at       REAL NOT NULL
-            )
-        """)
-        conn.commit()
+        _init_schema(conn)
+
+
+def _init_schema(conn: sqlite3.Connection):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS downloads (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            url         TEXT NOT NULL,
+            filename    TEXT,
+            dest_path   TEXT,
+            total_size  INTEGER DEFAULT 0,
+            downloaded_bytes INTEGER DEFAULT 0,
+            status      TEXT DEFAULT 'pending',
+            start_time  TEXT,
+            end_time    TEXT,
+            num_threads INTEGER DEFAULT 4,
+            error       TEXT,
+            segments_json TEXT
+        )
+    """)
+    _ensure_column(conn, "downloads", "downloaded_bytes", "INTEGER DEFAULT 0")
+    _ensure_column(conn, "downloads", "segments_json", "TEXT")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS download_queue (
+            id              TEXT PRIMARY KEY,
+            url             TEXT NOT NULL,
+            dest_dir        TEXT NOT NULL,
+            filename        TEXT,
+            num_threads     INTEGER DEFAULT 4,
+            max_retries     INTEGER DEFAULT 3,
+            bandwidth_limit INTEGER,
+            scheduled_at    REAL,
+            queued_at       REAL NOT NULL
+        )
+    """)
+    conn.commit()
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str):

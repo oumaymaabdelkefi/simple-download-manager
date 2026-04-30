@@ -34,6 +34,11 @@ class SDMBrowserHandler(BaseHTTPRequestHandler):
             self.send_error(404)
         except (BrokenPipeError, ConnectionResetError):
             return
+        except Exception as exc:
+            try:
+                self._send_json({"ok": False, "error": str(exc)}, status=500)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
     def do_POST(self):
         path = urlparse(self.path).path
